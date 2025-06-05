@@ -255,13 +255,15 @@ function addData(label, data) {
   const rateLabels = [...toRaw(rateChartData.value.labels)];
   const rateData = [...toRaw(rateChartData.value.datasets[0].data)];
 
-  if (rateLabels.length >= historySize) {
+  if (rateLabels.length >= historySize.value) {
     rateLabels.shift();
     rateData.shift();
   }
 
+  const recalculatedRate =
+    rateLabels.length === 0 ? 0 : (data - previousData.value) / updateInterval.value; // Inicia com 0
   rateLabels.push(label);
-  rateData.push(currentRate.value);
+  rateData.push(recalculatedRate);
 
   rateChartData.value = {
     labels: rateLabels,
@@ -272,6 +274,8 @@ function addData(label, data) {
       },
     ],
   };
+
+  previousData.value = data; // Atualiza o dado anterior
 }
 
 async function fetchData() {
@@ -284,8 +288,10 @@ async function fetchData() {
     isConnected.value = true;
   } catch (e) {
     console.error("Erro ao buscar dados SNMP", e);
+    const now = new Date();
+    addData(now.toLocaleTimeString(), 0); // Adiciona 0 em caso de erro
+    lastUpdate.value = `Erro: ${now.toLocaleTimeString()}`;
     isConnected.value = false;
-    lastUpdate.value = `Erro: ${new Date().toLocaleTimeString()}`;
   }
 }
 
@@ -329,9 +335,9 @@ export default {
 
 <style scoped>
 .chart-container {
-  max-width: 1100px;
-  height: 700px;
-  margin-top: 30px auto;
+  max-width: 60%;
+  height: 650px;
+  margin: 20px auto;
   background-color: #ffffff;
   box-shadow: 0 6px 25px rgba(0, 0, 0, 0.08);
   border-radius: 18px;
@@ -404,9 +410,26 @@ export default {
 .chart-wrapper {
   flex: 1;
   position: relative;
-  margin: 10px 0;
   width: 100%;
-  height: 100%;
+  height: 400px; /* Altura padrão */
+}
+
+@media (max-width: 1024px) {
+  .chart-wrapper {
+    height: 300px; /* Reduz altura em telas médias */
+  }
+}
+
+@media (max-width: 768px) {
+  .chart-wrapper {
+    height: 250px; /* Reduz altura em telas pequenas */
+  }
+}
+
+@media (max-width: 480px) {
+  .chart-wrapper {
+    height: 200px; /* Reduz altura em telas muito pequenas */
+  }
 }
 
 canvas {
