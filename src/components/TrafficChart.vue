@@ -4,11 +4,14 @@
       <h2 class="title">📊 Monitoramento de Tráfego de Rede</h2>
     </div>
     <div class="controls">
-      <div class="stats">
-        <div class="stat">
-          <span class="stat-label">Taxa atual:</span>
-          <span class="stat-value">{{ currentRate }} bytes/s</span>
-        </div>
+      <!-- Removido o painel de taxa atual -->
+      <div class="update-interval">
+        <label for="ethernet-select">Selecione a interface Ethernet:</label>
+        <select id="ethernet-select" v-model="selectedEthernet">
+          <option v-for="port in ethernetPorts" :key="port" :value="port">
+            Ethernet {{ port }}
+          </option>
+        </select>
       </div>
       <div class="update-interval">
         <label for="interval-input"
@@ -37,6 +40,13 @@
           <option value="rate">Taxa de Transmissão</option>
         </select>
       </div>
+      <button
+        class="toggle-button"
+        :class="{ stop: isFetching, resume: !isFetching }"
+        @click="toggleFetchingData"
+      >
+        {{ isFetching ? "Parar" : "Retomar" }}
+      </button>
     </div>
     <div class="chart-wrapper">
       <component
@@ -72,11 +82,13 @@ import {
 
 const lastUpdate = ref("N/A");
 const isConnected = ref(true);
-const previousData = ref(0);
 const updateInterval = ref(5); // Valor inicial em segundos
 const selectedChart = ref("received"); // Gráfico inicial
+const selectedEthernet = ref(1); // Interface Ethernet inicial
+const ethernetPorts = [1, 2, 3, 4]; // Interfaces Ethernet disponíveis
 let updateIntervalId = null;
 const historySize = ref(20); // Tamanho máximo do histórico de dados
+const isFetching = ref(true); // Estado para controlar se o gráfico está sendo atualizado
 
 const currentRate = computed(() => {
   const data = chartData.value.datasets[0].data;
@@ -112,7 +124,7 @@ const chartData = ref({
   labels: [],
   datasets: [
     {
-      label: "Bytes recebidos",
+      label: "Bytes recebidos (rxBytes)",
       data: [],
       borderColor: "#1e90ff",
       backgroundColor: null,
@@ -126,14 +138,8 @@ const chartData = ref({
       pointHoverBackgroundColor: "#ff6347",
       borderWidth: 3,
     },
-  ],
-});
-
-const rateChartData = ref({
-  labels: [],
-  datasets: [
     {
-      label: "Taxa de transmissão (bytes/s)",
+      label: "Bytes transmitidos (txBytes)",
       data: [],
       borderColor: "#ff6347",
       backgroundColor: null,
@@ -149,6 +155,49 @@ const rateChartData = ref({
     },
   ],
 });
+
+const rateChartData = ref({
+  labels: [],
+  datasets: [
+    {
+      label: "Taxa de recebimento (rxBits/s)",
+      data: [],
+      borderColor: "#1e90ff",
+      backgroundColor: null,
+      fill: true,
+      tension: 0.4,
+      pointRadius: 5,
+      pointHoverRadius: 8,
+      pointBorderWidth: 2,
+      pointBorderColor: "#fff",
+      pointBackgroundColor: "#1e90ff",
+      pointHoverBackgroundColor: "#ff6347",
+      borderWidth: 3,
+    },
+    {
+      label: "Taxa de transmissão (txBits/s)",
+      data: [],
+      borderColor: "#ff6347",
+      backgroundColor: null,
+      fill: true,
+      tension: 0.4,
+      pointRadius: 5,
+      pointHoverRadius: 8,
+      pointBorderWidth: 2,
+      pointBorderColor: "#fff",
+      pointBackgroundColor: "#ff6347",
+      pointHoverBackgroundColor: "#1e90ff",
+      borderWidth: 3,
+    },
+  ],
+});
+
+function formatBytes(bytes) {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`;
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(2)} MB`;
+  if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(2)} KB`;
+  return `${bytes.toFixed(2)} B`;
+}
 
 const chartOptions = {
   responsive: true,
@@ -173,9 +222,10 @@ const chartOptions = {
           return `⏰ ${context[0].label}`;
         },
         label(context) {
+          const value = context.parsed.y;
           return selectedChart.value === "rate"
-            ? `📦 ${context.parsed.y.toLocaleString()} bytes/s`
-            : `📦 ${context.parsed.y.toLocaleString()} bytes`;
+            ? `📦 ${formatBits(value)}`
+            : `📦 ${formatBytes(value)}`;
         },
       },
     },
@@ -205,12 +255,9 @@ const chartOptions = {
           size: 13,
         },
         callback(value) {
-          const formattedValue = value.toLocaleString();
-          if (selectedChart.value === "rate") {
-            return `${formattedValue} bytes/s`;
-          } else {
-            return `${formattedValue} bytes`;
-          }
+          return selectedChart.value === "rate"
+            ? formatBits(value)
+            : formatBytes(value);
         },
       },
     },
@@ -228,96 +275,168 @@ const chartOptions = {
   },
 };
 
-function addData(label, data) {
-  const labels = [...toRaw(chartData.value.labels)];
-  const datasetData = [...toRaw(chartData.value.datasets[0].data)];
+function formatBits(bits) {
+  if (bits >= 1e9) return `${(bits / 1e9).toFixed(2)} Gb/s`;
+  if (bits >= 1e6) return `${(bits / 1e6).toFixed(2)} Mb/s`;
+  if (bits >= 1e3) return `${(bits / 1e3).toFixed(2)} kb/s`;
+  return `${bits.toFixed(2)} b/s`;
+}
 
-  // Mantém no máximo 20 pontos
+function addData(label, rxBytes, txBytes) {
+  const labels = [...toRaw(chartData.value.labels)];
+  const rxData = [...toRaw(chartData.value.datasets[0].data)];
+  const txData = [...toRaw(chartData.value.datasets[1].data)];
+
   if (labels.length >= historySize.value) {
     labels.shift();
-    datasetData.shift();
+    rxData.shift();
+    txData.shift();
   }
 
   labels.push(label);
-  datasetData.push(data);
+  rxData.push(rxBytes);
+  txData.push(txBytes);
 
   chartData.value = {
     labels,
     datasets: [
-      {
-        ...chartData.value.datasets[0],
-        data: datasetData,
-      },
+      { ...chartData.value.datasets[0], data: rxData },
+      { ...chartData.value.datasets[1], data: txData },
     ],
   };
 
   // Atualiza o gráfico de taxa de transmissão
   const rateLabels = [...toRaw(rateChartData.value.labels)];
-  const rateData = [...toRaw(rateChartData.value.datasets[0].data)];
+  const rxRateData = [...toRaw(rateChartData.value.datasets[0].data)];
+  const txRateData = [...toRaw(rateChartData.value.datasets[1].data)];
 
   if (rateLabels.length >= historySize.value) {
     rateLabels.shift();
-    rateData.shift();
+    rxRateData.shift();
+    txRateData.shift();
   }
 
-  const recalculatedRate =
-    rateLabels.length === 0 ? 0 : (data - previousData.value) / updateInterval.value; // Inicia com 0
+  const rxRate =
+    rxData.length > 1
+      ? ((rxData[rxData.length - 1] - rxData[rxData.length - 2]) * 8) /
+        updateInterval.value
+      : 0; // Convertendo para bits
+  const txRate =
+    txData.length > 1
+      ? ((txData[txData.length - 1] - txData[txData.length - 2]) * 8) /
+        updateInterval.value
+      : 0; // Convertendo para bits
+
   rateLabels.push(label);
-  rateData.push(recalculatedRate);
+  rxRateData.push(rxRate);
+  txRateData.push(txRate);
 
   rateChartData.value = {
     labels: rateLabels,
     datasets: [
-      {
-        ...rateChartData.value.datasets[0],
-        data: rateData,
-      },
+      { ...rateChartData.value.datasets[0], data: rxRateData },
+      { ...rateChartData.value.datasets[1], data: txRateData },
     ],
   };
-
-  previousData.value = data; // Atualiza o dado anterior
 }
 
 async function fetchData() {
   try {
-    const res = await axios.get("http://localhost:3001/snmp/trafego");
+    const res = await axios.get(
+      `http://localhost:3001/snmp/trafego?rxPorta=${selectedEthernet.value}&txPorta=${selectedEthernet.value}`
+    );
     const now = new Date();
-    previousData.value = chartData.value.datasets[0].data.slice(-1)[0] || 0;
-    addData(now.toLocaleTimeString(), res.data.bytes);
+    const { rxBytes, txBytes } = res.data.valores;
+
+    addData(now.toLocaleTimeString(), rxBytes, txBytes);
     lastUpdate.value = now.toLocaleTimeString();
     isConnected.value = true;
   } catch (e) {
     console.error("Erro ao buscar dados SNMP", e);
-    const now = new Date();
-    addData(now.toLocaleTimeString(), 0); // Adiciona 0 em caso de erro
-    lastUpdate.value = `Erro: ${now.toLocaleTimeString()}`;
     isConnected.value = false;
+    lastUpdate.value = `Erro: ${new Date().toLocaleTimeString()}`;
   }
 }
 
 function startFetchingData() {
   if (updateIntervalId) clearInterval(updateIntervalId);
   updateIntervalId = setInterval(fetchData, updateInterval.value * 1000);
+  console.log("Atualização do gráfico retomada.");
 }
 
-watch(updateInterval, () => {
+function stopFetchingData() {
+  if (updateIntervalId) {
+    clearInterval(updateIntervalId);
+    updateIntervalId = null;
+    console.log("Atualização do gráfico parada.");
+  }
+}
+
+function toggleFetchingData() {
+  if (isFetching.value) {
+    stopFetchingData();
+    isConnected.value = false; // Atualiza o status para "Desconectado"
+  } else {
+    startFetchingData();
+    isConnected.value = true; // Atualiza o status para "Conectado"
+  }
+  isFetching.value = !isFetching.value; // Alterna o estado
+}
+
+watch([updateInterval, selectedEthernet], () => {
   startFetchingData();
 });
 
 onMounted(() => {
   const canvas = document.querySelector("canvas");
+  if (!canvas) {
+    console.error("Canvas não encontrado!");
+    return;
+  }
+
   const ctx = canvas.getContext("2d");
-  const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
-  gradient.addColorStop(0, "rgba(30, 144, 255, 0.4)");
-  gradient.addColorStop(1, "rgba(30, 144, 255, 0)");
+  if (!ctx) {
+    console.error("Contexto do canvas não inicializado!");
+    return;
+  }
 
-  chartData.value.datasets[0].backgroundColor = gradient;
+  // Gradiente para Bytes Recebidos
+  const gradientRx = ctx.createLinearGradient(0, 0, 0, canvas.height || 400); // Garantir altura padrão
+  gradientRx.addColorStop(0, "rgba(30, 144, 255, 0.4)");
+  gradientRx.addColorStop(1, "rgba(30, 144, 255, 0)");
 
-  const rateGradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
-  rateGradient.addColorStop(0, "rgba(255, 99, 71, 0.4)");
-  rateGradient.addColorStop(1, "rgba(255, 99, 71, 0)");
+  chartData.value.datasets[0].backgroundColor = gradientRx;
 
-  rateChartData.value.datasets[0].backgroundColor = rateGradient;
+  // Gradiente para Bytes Transmitidos
+  const gradientTx = ctx.createLinearGradient(0, 0, 0, canvas.height || 400); // Garantir altura padrão
+  gradientTx.addColorStop(0, "rgba(255, 99, 71, 0.4)"); // Laranja
+  gradientTx.addColorStop(1, "rgba(255, 99, 71, 0)");
+
+  chartData.value.datasets[1].backgroundColor = gradientTx;
+
+  // Gradiente para Taxa de Transmissão (rxBytes/s)
+  const rateGradientRx = ctx.createLinearGradient(
+    0,
+    0,
+    0,
+    canvas.height || 400
+  );
+  rateGradientRx.addColorStop(0, "rgba(30, 144, 255, 0.4)");
+  rateGradientRx.addColorStop(1, "rgba(30, 144, 255, 0)");
+
+  rateChartData.value.datasets[0].backgroundColor = rateGradientRx;
+
+  // Gradiente para Taxa de Transmissão (txBytes/s)
+  const rateGradientTx = ctx.createLinearGradient(
+    0,
+    0,
+    0,
+    canvas.height || 400
+  );
+  rateGradientTx.addColorStop(0, "rgba(255, 99, 71, 0.4)");
+  rateGradientTx.addColorStop(1, "rgba(255, 99, 71, 0)");
+
+  rateChartData.value.datasets[1].backgroundColor = rateGradientTx;
 
   fetchData();
   startFetchingData();
@@ -335,120 +454,118 @@ export default {
 
 <style scoped>
 .chart-container {
-  max-width: 60%;
-  height: 650px;
-  margin: 20px auto;
-  background-color: #ffffff;
-  box-shadow: 0 6px 25px rgba(0, 0, 0, 0.08);
-  border-radius: 18px;
-  padding: 20px;
+  max-width: 100%; /* Garante que o contêiner não ultrapasse a largura da tela */
+  overflow: hidden; /* Evita que o conteúdo ultrapasse os limites */
+  margin: 30px auto;
+  padding: 25px;
   box-sizing: border-box;
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
   display: flex;
   flex-direction: column;
-  border: 1px solid #eaeaea;
+  border: 1px solid #ddd;
   transition: all 0.3s ease;
 }
 
 .chart-container:hover {
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 6px 25px rgba(0, 0, 0, 0.15);
 }
 
 .header {
   display: flex;
-  justify-content: center; /* Centraliza horizontalmente */
-  align-items: center; /* Centraliza verticalmente */
-  margin-bottom: 20px; /* Espaçamento maior abaixo do cabeçalho */
-  padding: 10px 0; /* Adiciona espaçamento interno */
-  background-color: #f0f8ff; /* Fundo leve */
-  border-radius: 12px; /* Bordas arredondadas */
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1); /* Sombra suave */
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 20px;
+  padding: 10px 0;
+  background-color: #eaf4fc;
+  border-radius: 8px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
 }
 
 .title {
-  color: #1e90ff; /* Azul vibrante */
-  font-size: 24px; /* Tamanho maior */
-  font-weight: 700; /* Negrito */
-  margin: 0; /* Remove margens padrão */
-  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif; /* Fonte consistente */
-  text-align: center; /* Centraliza o texto */
+  color: #007bff;
+  font-size: 26px;
+  font-weight: 700;
+  margin: 0;
+  text-align: center;
 }
 
 .controls {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 15px;
-  gap: 20px;
+  margin-bottom: 20px;
+  gap: 15px;
 }
 
-.stats {
-  background: #f8f9fa;
-  padding: 8px 15px;
-  border-radius: 12px;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
-}
-
-.stat {
+.update-interval,
+.chart-selection {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
 }
 
-.stat-label {
-  color: #6c757d;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.stat-value {
-  color: #1e90ff;
+label {
   font-size: 14px;
   font-weight: 600;
+  color: #555;
+}
+
+input,
+select {
+  width: 100%;
+  max-width: 200px;
+  padding: 8px 12px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #333;
+  background-color: #fff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 8px rgba(0, 123, 255, 0.3);
+}
+
+input:hover,
+select:hover {
+  background-color: #f8f9fa;
 }
 
 .chart-wrapper {
   flex: 1;
   position: relative;
-  width: 100%;
-  height: 400px; /* Altura padrão */
-}
-
-@media (max-width: 1024px) {
-  .chart-wrapper {
-    height: 300px; /* Reduz altura em telas médias */
-  }
-}
-
-@media (max-width: 768px) {
-  .chart-wrapper {
-    height: 250px; /* Reduz altura em telas pequenas */
-  }
-}
-
-@media (max-width: 480px) {
-  .chart-wrapper {
-    height: 200px; /* Reduz altura em telas muito pequenas */
-  }
+  margin: 20px 0;
+  width: 100%; /* Garante que o gráfico ocupe 100% da largura disponível */
+  max-width: 100%; /* Evita que o gráfico ultrapasse os limites do contêiner */
+  height: 500px;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  padding: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 canvas {
   width: 100% !important;
   height: 100% !important;
-  transition: opacity 0.3s ease;
-}
-
-canvas:hover {
-  opacity: 0.95;
+  border-radius: 8px;
 }
 
 .footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 10px;
+  margin-top: 15px;
   font-size: 13px;
-  color: #6c757d;
+  color: #666;
 }
 
 .update-info {
@@ -456,84 +573,59 @@ canvas:hover {
 }
 
 .connection-status {
-  padding: 4px 10px;
-  border-radius: 12px;
-  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-weight: 600;
   font-size: 12px;
 }
 
 .connection-status.connected {
-  background-color: rgba(46, 213, 115, 0.15);
-  color: #2ed573;
+  background-color: rgba(40, 167, 69, 0.1);
+  color: #28a745;
 }
 
 .connection-status:not(.connected) {
-  background-color: rgba(255, 71, 87, 0.15);
-  color: #ff4757;
+  background-color: rgba(220, 53, 69, 0.1);
+  color: #dc3545;
 }
 
-.update-interval {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-#interval-input {
-  width: 80px;
-  padding: 6px 10px;
-  border: 1px solid #ddd;
-  border-radius: 20px;
+.toggle-button {
+  padding: 10px 20px;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
   font-size: 14px;
-  color: #333;
-  background-color: #f9f9f9;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  transition: all 0.3s ease;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
 }
 
-#interval-input:focus {
-  outline: none;
-  border-color: #1e90ff;
-  background-color: #ffffff;
-  box-shadow: 0 0 8px rgba(30, 144, 255, 0.4);
+.toggle-button.stop {
+  background-color: #dc3545; /* Vermelho para "Parar" */
 }
 
-#interval-input:hover {
-  background-color: #ffffff;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+.toggle-button.stop:hover {
+  background-color: #c82333;
 }
 
-.chart-selection {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.toggle-button.stop:active {
+  background-color: #bd2130;
 }
 
-#chart-select {
-  padding: 6px 10px;
-  border: 1px solid #ddd;
-  border-radius: 20px;
-  font-size: 14px;
-  color: #333;
-  background-color: #f9f9f9;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  transition: all 0.3s ease;
+.toggle-button.resume {
+  background-color: #28a745; /* Verde para "Retomar" */
 }
 
-#chart-select:focus {
-  outline: none;
-  border-color: #1e90ff;
-  background-color: #ffffff;
-  box-shadow: 0 0 8px rgba(30, 144, 255, 0.4);
+.toggle-button.resume:hover {
+  background-color: #218838;
 }
 
-#chart-select:hover {
-  background-color: #ffffff;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+.toggle-button.resume:active {
+  background-color: #1e7e34;
 }
 
 @media (max-width: 768px) {
   .chart-container {
-    height: auto;
     padding: 15px;
   }
 
@@ -545,6 +637,17 @@ canvas:hover {
 
   .title {
     font-size: 20px;
+  }
+
+  .controls {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 15px;
+  }
+
+  input,
+  select {
+    max-width: 100%;
   }
 }
 </style>
