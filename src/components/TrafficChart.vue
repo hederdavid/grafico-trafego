@@ -62,6 +62,9 @@
       </span>
     </div>
   </div>
+  <div v-if="!isConnected" class="error-message">
+    Erro ao buscar dados. Verifique a conexão com o Mikrotik.
+  </div>
 </template>
 
 <script setup>
@@ -88,20 +91,7 @@ const selectedEthernet = ref(1); // Interface Ethernet inicial
 const ethernetPorts = [1, 2, 3, 4]; // Interfaces Ethernet disponíveis
 let updateIntervalId = null;
 const historySize = ref(20); // Tamanho máximo do histórico de dados
-const isFetching = ref(true); // Estado para controlar se o gráfico está sendo atualizado
-
-const currentRate = computed(() => {
-  const data = chartData.value.datasets[0].data;
-  const labels = chartData.value.labels;
-
-  if (data.length < 2 || labels.length < 2) return "0";
-
-  const lastValue = data[data.length - 1];
-  const previousValue = data[data.length - 2];
-
-  const rate = (lastValue - previousValue) / updateInterval.value;
-  return rate.toLocaleString();
-});
+const isFetching = ref(false); // Estado para controlar se o gráfico está sendo atualizado
 
 const suggestedMax = computed(() => {
   const data = chartData.value.datasets[0].data;
@@ -135,7 +125,7 @@ const chartData = ref({
       pointBorderWidth: 2,
       pointBorderColor: "#fff",
       pointBackgroundColor: "#1e90ff",
-      pointHoverBackgroundColor: "#ff6347",
+      pointHoverBackgroundColor: "#1e90ff", // Keep hover color blue
       borderWidth: 3,
     },
     {
@@ -150,7 +140,7 @@ const chartData = ref({
       pointBorderWidth: 2,
       pointBorderColor: "#fff",
       pointBackgroundColor: "#ff6347",
-      pointHoverBackgroundColor: "#1e90ff",
+      pointHoverBackgroundColor: "#ff6347", // Keep hover color orange
       borderWidth: 3,
     },
   ],
@@ -202,8 +192,8 @@ function formatBytes(bytes) {
 const chartOptions = {
   responsive: true,
   animation: {
-    duration: 800,
-    easing: "easeInOutCubic",
+    duration: 1500,
+    easing: "easeOutQuart",
   },
   interaction: {
     mode: "nearest",
@@ -351,9 +341,12 @@ async function fetchData() {
     addData(now.toLocaleTimeString(), rxBytes, txBytes);
     lastUpdate.value = now.toLocaleTimeString();
     isConnected.value = true;
+    isFetching.value = true;
   } catch (e) {
     console.error("Erro ao buscar dados SNMP", e);
     isConnected.value = false;
+    isFetching.value = false;
+
     lastUpdate.value = `Erro: ${new Date().toLocaleTimeString()}`;
   }
 }
@@ -372,13 +365,20 @@ function stopFetchingData() {
   }
 }
 
-function toggleFetchingData() {
+async function toggleFetchingData() {
   if (isFetching.value) {
     stopFetchingData();
     isConnected.value = false; // Atualiza o status para "Desconectado"
   } else {
-    startFetchingData();
-    isConnected.value = true; // Atualiza o status para "Conectado"
+    try {
+      await fetchData(); // Tenta buscar os dados imediatamente
+      startFetchingData(); // Se bem-sucedido, inicia o intervalo
+      isConnected.value = true; // Atualiza o status para "Conectado"
+    } catch (e) {
+      console.error("Falha ao retomar a conexão", e);
+      isConnected.value = false; // Atualiza o status para "Desconectado"
+      return; // Sai da função sem alternar o estado
+    }
   }
   isFetching.value = !isFetching.value; // Alterna o estado
 }
@@ -542,8 +542,8 @@ select:hover {
   position: relative;
   margin: 20px 0;
   width: 100%; /* Garante que o gráfico ocupe 100% da largura disponível */
-  max-width: 100%; /* Evita que o gráfico ultrapasse os limites do contêiner */
-  height: 500px;
+  max-width: 97.5%; /* Evita que o gráfico ultrapasse os limites do contêiner */
+  height: 60vh;
   background: #fff;
   border-radius: 8px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
@@ -598,6 +598,7 @@ canvas {
   font-weight: bold;
   cursor: pointer;
   transition: background-color 0.3s ease;
+  align-self: flex-end;
 }
 
 .toggle-button.stop {
@@ -643,6 +644,12 @@ canvas {
     flex-direction: column;
     align-items: flex-start;
     gap: 15px;
+  }
+
+  .error-message {
+    color: #dc3545;
+    font-weight: bold;
+    margin-top: 10px;
   }
 
   input,
